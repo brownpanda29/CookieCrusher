@@ -1,42 +1,22 @@
-// Broader list of "reject or minimal consent" buttons
-const rejectLikePhrases = [
-  'reject all',
-  'only essential',
-  'use essential',
-  'accept necessary',
-  'strictly necessary',
-  'decline',
-  'do not accept',
-  'continue without accepting',
-  'save preferences',
-  'save settings',
-  'confirm choices',
-  'manage choices'
-];
-
-// Phrases to avoid clicking
-const acceptLikePhrases = [
-  'accept all',
-  'agree',
-  'allow all',
-  'i accept',
-  'i agree',
-  'accept everything'
-];
-
 function clickRejectButton() {
   const buttons = document.querySelectorAll('button, input[type="button"], a');
+
+  const rejectLikePhrases = [
+    'reject all', 'only essential', 'use essential', 'accept necessary',
+    'strictly necessary', 'decline', 'do not accept', 'continue without accepting',
+    'save preferences', 'save settings', 'confirm choices', 'manage choices'
+  ];
+
+  const acceptLikePhrases = [
+    'accept all', 'agree', 'allow all', 'i accept', 'i agree', 'accept everything'
+  ];
 
   for (let btn of buttons) {
     const text = btn.textContent?.toLowerCase() || btn.value?.toLowerCase() || '';
 
-    // Skip if text matches an Accept All
-    if (acceptLikePhrases.some(accept => text.includes(accept))) {
-      continue;
-    }
+    if (acceptLikePhrases.some(p => text.includes(p))) continue;
 
-    // Click if text matches a reject-like phrase
-    if (rejectLikePhrases.some(reject => text.includes(reject))) {
+    if (rejectLikePhrases.some(p => text.includes(p))) {
       console.log(`[CookieCrusher] Clicking reject-like button: "${text}"`);
       btn.click();
       return;
@@ -44,7 +24,11 @@ function clickRejectButton() {
   }
 }
 
-window.addEventListener('load', () => {
-  // Wait to allow banner to load
-  setTimeout(clickRejectButton, 1500);
+// Load setting before acting
+chrome.storage.sync.get('autoRejectEnabled', (data) => {
+  if (data.autoRejectEnabled ?? true) {
+    window.addEventListener('load', () => {
+      setTimeout(clickRejectButton, 1500);
+    });
+  }
 });

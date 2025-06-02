@@ -820,3 +820,585 @@ class CookieCrusher {
       button.style.outline = 'none !important';
     });
   }
+  positionButton(button) {
+    // Enhanced positioning with better overlap detection
+    const checkOverlap = () => {
+      const rect = button.getBoundingClientRect();
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+      
+      // Get all elements at the button's center point
+      const elementsAtPoint = document.elementsFromPoint(centerX, centerY);
+      
+      // Check if button is overlapping with important elements
+      const isOverlapping = elementsAtPoint.some(el => 
+        el !== button && 
+        el !== document.body && 
+        el !== document.documentElement &&
+        (el.tagName === 'BUTTON' || 
+         el.tagName === 'A' || 
+         el.getAttribute('role') === 'button' ||
+         window.getComputedStyle(el).zIndex > 1000)
+      );
+      
+      if (isOverlapping) {
+        // Adjust position if overlapping
+        const currentBottom = parseInt(button.style.bottom) || 20;
+        const currentRight = parseInt(button.style.right) || 20;
+        
+        // Try different positions
+        if (currentBottom < 200) {
+          button.style.bottom = (currentBottom + 70) + 'px !important';
+        } else {
+          // Move to left side if bottom gets too high
+          button.style.right = 'auto !important';
+          button.style.left = '20px !important';
+        }
+        
+        this.logDebug('Button position adjusted due to overlap');
+      }
+    };
+
+    // Check overlap after a short delay and periodically
+    setTimeout(checkOverlap, 200);
+    setTimeout(checkOverlap, 1000);
+  }
+
+  async handleManualReject(button) {
+    const originalText = button.innerHTML;
+    const originalDisabled = button.disabled;
+    
+    button.innerHTML = '⏳ Processing...';
+    button.disabled = true;
+    button.style.cursor = 'wait !important';
+
+    try {
+      this.logInfo('Manual rejection initiated');
+      
+      // First try automatic rejection
+      const success = this.detectAndRejectCookies('manual-trigger');
+      
+      if (!success) {
+        // Try alternative rejection methods
+        button.innerHTML = '🔄 Trying alternatives...';
+        await this.performAlternativeRejection();
+      }
+
+      // Show success state
+      button.innerHTML = '✅ Success!';
+      button.style.background = 'linear-gradient(135deg, #28a745, #20c997) !important';
+      this.showFeedback('Cookie rejection completed successfully! 🎉', 'success');
+      
+      // Start monitoring for auto-removal
+      if (this.settings.autoRemoveButton) {
+        this.startBannerMonitoring();
+      } else {
+        // Remove button after delay if auto-remove is disabled
+        setTimeout(() => {
+          this.removeManualButton();
+        }, 3000);
+      }
+
+    } catch (error) {
+      this.logError('Error in manual reject', { error: error.message });
+      button.innerHTML = '❌ Error';
+      button.style.background = 'linear-gradient(135deg, #dc3545, #c82333) !important';
+      this.showFeedback('An error occurred during cookie rejection', 'error');
+      
+      // Restore button after error
+      setTimeout(() => {
+        button.innerHTML = originalText;
+        button.disabled = originalDisabled;
+        button.style.cursor = 'pointer !important';
+      }, 3000);
+    }
+  }
+
+  async performAlternativeRejection() {
+    this.logInfo('Starting alternative rejection methods');
+    
+    let actionsPerformed = 0;
+    
+    // Method 1: Hide cookie banners with improved detection
+    try {
+      const bannerSelectors = [
+        '[id*="cookie" i]', '[class*="cookie" i]',
+        '[id*="consent" i]', '[class*="consent" i]',
+        '[id*="gdpr" i]', '[class*="gdpr" i]',
+        '[id*="privacy" i]', '[class*="privacy" i]',
+        '[role="dialog"]', '[role="alertdialog"]',
+        '[aria-modal="true"]', '[data-modal="true"]',
+        // Framework-specific selectors
+        '.modal-backdrop', '.overlay', '.popup-overlay'
+      ];
+
+      const banners = document.querySelectorAll(bannerSelectors.join(', '));
+      let hiddenCount = 0;
+
+      banners.forEach(banner => {
+        if (this.isElementVisible(banner) && 
+            (banner.offsetHeight > 50 || banner.offsetWidth > 200) &&
+            this.hasRelevantContent(banner, ['cookie', 'consent', 'privacy', 'gdpr'])) {
+          
+          // Hide the element
+          banner.style.setProperty('display', 'none', 'important');
+          banner.style.setProperty('visibility', 'hidden', 'important');
+          banner.style.setProperty('opacity', '0', 'important');
+          banner.setAttribute('aria-hidden', 'true');
+          banner.setAttribute('data-cookiecrusher-hidden', 'true');
+          
+          // Also hide parent if it's a wrapper
+          const parent = banner.parentElement;
+          if (parent && parent.children.length === 1 && 
+              (parent.className.toLowerCase().includes('modal') || 
+               parent.className.toLowerCase().includes('overlay'))) {
+            parent.style.setProperty('display', 'none', 'important');
+          }
+          
+          hiddenCount++;
+        }
+      });
+
+      if (hiddenCount > 0) {
+        actionsPerformed++;
+        this.logInfo(`Hidden ${hiddenCount} cookie banners`);
+      }
+    } catch (error) {
+      this.logError('Error hiding banners', { error: error.message });
+    }
+
+    // Method 2: Clear cookie-related storage
+    try {
+      const storageKeys = [
+        ...Object.keys(localStorage).filter(key => 
+          /cookie|consent|gdpr|privacy|tracking|analytics|marketing|advertising/i.test(key)
+        ),
+        ...Object.keys(sessionStorage).filter(key => 
+          /cookie|consent|gdpr|privacy|tracking|analytics|marketing|advertising/i.test(key)
+        )
+      ];
+
+      let clearedCount = 0;
+      storageKeys.forEach(key => {
+        try {
+          localStorage.removeItem(key);
+          sessionStorage.removeItem(key);
+          clearedCount++;
+        } catch (e) {
+          this.logDebug('Could not clear storage key', { key, error: e.message });
+        }
+      });
+
+      if (clearedCount > 0) {
+        actionsPerformed++;
+        this.logInfo(`Cleared ${clearedCount} storage keys`);
+      }
+    } catch (error) {
+      this.logError('Error clearing storage', { error: error.message });
+    }
+
+    // Method 3: Set comprehensive rejection flags
+    try {
+      const rejectionFlags = {
+        // Standard flags
+        'cookieConsent': 'rejected',
+        'cookiesAccepted': false,
+        'gdprConsent': false,
+        'privacyConsent': false,
+        'trackingAllowed': false,
+        'analyticsEnabled': false,
+        'marketingEnabled': false,
+        'functionalEnabled': false,
+        
+        // Common framework flags
+        'cc-cookie': '{"level":["necessary"]}',
+        'cookie-agreed': '0',
+        'cookie_consent': 'essential',
+        'cookies_policy': 'rejected',
+        'gdpr-consent': 'denied',
+        
+        // Timestamp flags
+        'cookie-consent-date': new Date().toISOString(),
+        'gdpr-consent-date': new Date().toISOString(),
+        'privacy-policy-accepted': false,
+        
+        // Custom domain-specific flags
+        [`${window.location.hostname}-cookies`]: 'rejected',
+        [`${window.location.hostname}-consent`]: false
+      };
+
+      let flagsSet = 0;
+      Object.entries(rejectionFlags).forEach(([key, value]) => {
+        try {
+          localStorage.setItem(key, typeof value === 'string' ? value : JSON.stringify(value));
+          flagsSet++;
+        } catch (e) {
+          this.logDebug('Could not set rejection flag', { key, error: e.message });
+        }
+      });
+
+      if (flagsSet > 0) {
+        actionsPerformed++;
+        this.logInfo(`Set ${flagsSet} rejection flags`);
+      }
+    } catch (error) {
+      this.logError('Error setting rejection flags', { error: error.message });
+    }
+
+    // Method 4: Remove cookie-related CSS classes from body
+    try {
+      const bodyClasses = document.body.className.split(' ');
+      const cookieClasses = bodyClasses.filter(cls => 
+        /cookie|consent|gdpr|modal|popup|overlay/i.test(cls)
+      );
+      
+      if (cookieClasses.length > 0) {
+        cookieClasses.forEach(cls => document.body.classList.remove(cls));
+        actionsPerformed++;
+        this.logInfo(`Removed ${cookieClasses.length} body classes`, { classes: cookieClasses });
+      }
+    } catch (error) {
+      this.logError('Error removing body classes', { error: error.message });
+    }
+
+    // Method 5: Dispatch custom events to notify page of rejection
+    try {
+      const events = [
+        'cookiesRejected',
+        'gdprRejected',
+        'consentRejected',
+        'privacyRejected',
+        'trackingDisabled'
+      ];
+      
+      events.forEach(eventName => {
+        try {
+          const event = new CustomEvent(eventName, {
+            detail: {
+              source: 'CookieCrusher',
+              timestamp: new Date().toISOString(),
+              consent: false
+            },
+            bubbles: true
+          });
+          document.dispatchEvent(event);
+          window.dispatchEvent(event);
+        } catch (e) {
+          this.logDebug('Could not dispatch event', { event: eventName, error: e.message });
+        }
+      });
+      
+      actionsPerformed++;
+      this.logInfo('Dispatched rejection events');
+    } catch (error) {
+      this.logError('Error dispatching events', { error: error.message });
+    }
+
+    // Method 6: Anti-detection measures
+    try {
+      // Remove potential detection attributes
+      const detectionAttrs = ['data-visited', 'data-consented', 'data-tracked'];
+      detectionAttrs.forEach(attr => {
+        const elements = document.querySelectorAll(`[${attr}]`);
+        elements.forEach(el => el.removeAttribute(attr));
+      });
+      
+      // Set anti-detection flags
+      window.cookieConsentGiven = false;
+      window.gdprConsentGiven = false;
+      window.trackingEnabled = false;
+      
+      this.logDebug('Applied anti-detection measures');
+    } catch (error) {
+      this.logDebug('Error applying anti-detection', { error: error.message });
+    }
+
+    this.logInfo(`Alternative rejection completed with ${actionsPerformed} actions performed`);
+    return actionsPerformed > 0;
+  }
+
+  removeManualButton() {
+    const button = document.getElementById('cookiecrusher-reject');
+    if (button) {
+      // Fade out animation
+      button.style.transition = 'all 0.3s ease !important';
+      button.style.opacity = '0 !important';
+      button.style.transform = 'translateY(20px) scale(0.8) !important';
+      
+      setTimeout(() => {
+        if (button.parentNode) {
+          button.remove();
+        }
+        this.manualButtonInjected = false;
+        this.logInfo('Manual button removed');
+      }, 300);
+    }
+    
+    // Clear monitoring interval
+    if (this.bannerCheckInterval) {
+      clearInterval(this.bannerCheckInterval);
+      this.bannerCheckInterval = null;
+    }
+  }
+
+  showFeedback(message, type = 'info') {
+    // Remove existing feedback
+    const existingFeedback = document.getElementById('cookiecrusher-feedback');
+    if (existingFeedback) {
+      existingFeedback.remove();
+    }
+    
+    const feedback = document.createElement('div');
+    feedback.id = 'cookiecrusher-feedback';
+    feedback.setAttribute('role', 'alert');
+    feedback.setAttribute('aria-live', 'polite');
+    
+    const colors = {
+      success: { bg: '#28a745', border: '#20c997' },
+      error: { bg: '#dc3545', border: '#c82333' },
+      info: { bg: '#17a2b8', border: '#138496' },
+      warning: { bg: '#ffc107', border: '#e0a800' }
+    };
+
+    const color = colors[type] || colors.info;
+
+    feedback.style.cssText = `
+      position: fixed !important;
+      top: 20px !important;
+      right: 20px !important;
+      z-index: 2147483648 !important;
+      background: linear-gradient(135deg, ${color.bg}, ${color.border}) !important;
+      color: white !important;
+      padding: 16px 24px !important;
+      border-radius: 12px !important;
+      font-size: 14px !important;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+      font-weight: 500 !important;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.2) !important;
+      backdrop-filter: blur(10px) !important;
+      -webkit-backdrop-filter: blur(10px) !important;
+      animation: cookiecrusher-slideIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) !important;
+      max-width: 350px !important;
+      word-wrap: break-word !important;
+      border: 1px solid rgba(255,255,255,0.2) !important;
+    `;
+
+    // Add CSS animations if not exists
+    if (!document.getElementById('cookiecrusher-animations')) {
+      const style = document.createElement('style');
+      style.id = 'cookiecrusher-animations';
+      style.textContent = `
+        @keyframes cookiecrusher-slideIn {
+          from { 
+            transform: translateX(100%) translateY(-20px); 
+            opacity: 0; 
+            scale: 0.8;
+          }
+          to { 
+            transform: translateX(0) translateY(0); 
+            opacity: 1; 
+            scale: 1;
+          }
+        }
+        @keyframes cookiecrusher-slideOut {
+          from { 
+            transform: translateX(0) translateY(0); 
+            opacity: 1; 
+            scale: 1;
+          }
+          to { 
+            transform: translateX(100%) translateY(-20px); 
+            opacity: 0; 
+            scale: 0.8;
+          }
+        }
+      `;
+      document.head.appendChild(style);
+    }
+    
+    feedback.textContent = message;
+    document.body.appendChild(feedback);
+    
+    // Auto-remove with slide out animation
+    setTimeout(() => {
+      if (feedback.parentNode) {
+        feedback.style.animation = 'cookiecrusher-slideOut 0.3s ease-in !important';
+        setTimeout(() => {
+          if (feedback.parentNode) {
+            feedback.remove();
+          }
+        }, 300);
+      }
+    }, 4000);
+  }
+
+  trackDomainStats(action) {
+    const domain = window.location.hostname;
+    if (!this.analytics.domainStats[domain]) {
+      this.analytics.domainStats[domain] = {
+        bannersDetected: 0,
+        buttonsClicked: 0,
+        lastVisit: new Date().toISOString(),
+        rejectionMethods: {}
+      };
+    }
+
+    if (action === 'bannerDetected') {
+      this.analytics.domainStats[domain].bannersDetected++;
+    } else if (action === 'buttonClicked') {
+      this.analytics.domainStats[domain].buttonsClicked++;
+    }
+    
+    this.analytics.domainStats[domain].lastVisit = new Date().toISOString();
+  }
+
+  // Performance optimized cleanup method
+  destroy() {
+    this.logInfo('Destroying CookieCrusher instance');
+    
+    // Disconnect observers
+    if (this.mutationObserver) {
+      this.mutationObserver.disconnect();
+      this.mutationObserver = null;
+    }
+    
+    // Clear intervals
+    if (this.bannerCheckInterval) {
+      clearInterval(this.bannerCheckInterval);
+      this.bannerCheckInterval = null;
+    }
+    
+    // Clear timeouts
+    if (this.mutationTimeout) {
+      clearTimeout(this.mutationTimeout);
+      this.mutationTimeout = null;
+    }
+    
+    // Remove injected elements
+    this.removeManualButton();
+    
+    // Remove feedback
+    const feedback = document.getElementById('cookiecrusher-feedback');
+    if (feedback) {
+      feedback.remove();
+    }
+    
+    // Clear clicked buttons set
+    this.clickedButtons.clear();
+    
+    // Reset flags
+    this.processingRejection = false;
+    this.observerStarted = false;
+    this.manualButtonInjected = false;
+    
+    this.logInfo('CookieCrusher destroyed successfully');
+  }
+
+  // Utility method for debugging
+  getDebugInfo() {
+    return {
+      settings: this.settings,
+      analytics: this.analytics,
+      state: {
+        processingRejection: this.processingRejection,
+        observerStarted: this.observerStarted,
+        manualButtonInjected: this.manualButtonInjected,
+        clickedButtonsCount: this.clickedButtons.size,
+        lastRejectionAttempt: this.lastRejectionAttempt
+      },
+      page: {
+        url: window.location.href,
+        domain: window.location.hostname,
+        readyState: document.readyState,
+        title: document.title
+      }
+    };
+  }
+}
+
+// Enhanced initialization with better error handling
+let cookieCrusher;
+
+function initializeCookieCrusher() {
+  try {
+    if (cookieCrusher) {
+      cookieCrusher.destroy();
+    }
+    cookieCrusher = new CookieCrusher();
+  } catch (error) {
+    console.error('[CookieCrusher] Initialization failed:', error);
+    // Retry after a delay
+    setTimeout(initializeCookieCrusher, 2000);
+  }
+}
+
+// Handle different loading states with better detection
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initializeCookieCrusher);
+} else {
+  // Document already loaded
+  initializeCookieCrusher();
+}
+
+// Enhanced cleanup on page unload
+window.addEventListener('beforeunload', () => {
+  if (cookieCrusher) {
+    cookieCrusher.destroy();
+  }
+});
+
+// Handle page visibility changes (for mobile browsers)
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && cookieCrusher) {
+    // Page became visible, check for new banners
+    setTimeout(() => {
+      if (cookieCrusher && !cookieCrusher.processingRejection) {
+        cookieCrusher.detectAndRejectCookies('visibility-change');
+      }
+    }, 1000);
+  }
+});
+
+// Listen for settings changes with enhanced handling
+if (chrome.storage?.onChanged) {
+  chrome.storage.onChanged.addListener((changes, namespace) => {
+    if (namespace === 'sync' && changes.cookieCrusherSettings && cookieCrusher) {
+      const oldSettings = { ...cookieCrusher.settings };
+      cookieCrusher.settings = { ...cookieCrusher.settings, ...changes.cookieCrusherSettings.newValue };
+      
+      cookieCrusher.logInfo('Settings updated', { 
+        old: oldSettings, 
+        new: cookieCrusher.settings 
+      });
+      
+      // Restart if critical settings changed
+      if (oldSettings.autoRejectEnabled !== cookieCrusher.settings.autoRejectEnabled ||
+          oldSettings.shadowDomSupport !== cookieCrusher.settings.shadowDomSupport) {
+        cookieCrusher.logInfo('Critical settings changed, reinitializing...');
+        initializeCookieCrusher();
+      }
+    }
+  });
+}
+
+// Enhanced error handling for uncaught errors
+window.addEventListener('error', (event) => {
+  if (event.message?.includes('CookieCrusher') && cookieCrusher) {
+    cookieCrusher.logError('Uncaught error in CookieCrusher', {
+      message: event.message,
+      filename: event.filename,
+      lineno: event.lineno,
+      colno: event.colno
+    });
+  }
+});
+
+// Expose debug interface for development
+if (typeof window !== 'undefined') {
+  window.CookieCrusherDebug = {
+    getInstance: () => cookieCrusher,
+    getDebugInfo: () => cookieCrusher?.getDebugInfo(),
+    reinitialize: initializeCookieCrusher,
+    destroy: () => cookieCrusher?.destroy()
+  };
+  }
